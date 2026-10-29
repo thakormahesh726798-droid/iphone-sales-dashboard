@@ -1,0 +1,85 @@
+// Replace 'iphone_sales_dataset' with your table name, and [Sales_Date] with [Sales_Date] if your column uses that name.
+
+Total Sales = SUM('iphone_sales_dataset'[Total_Sales])
+Total Profit = SUM('iphone_sales_dataset'[Profit])
+Profit Margin % = DIVIDE(SUM('iphone_sales_dataset'[Profit]), SUM('iphone_sales_dataset'[Total_Sales]))
+Total Orders = DISTINCTCOUNT('iphone_sales_dataset'[Order_ID])
+Units Sold = SUM('iphone_sales_dataset'[Quantity])
+Avg Order Value = DIVIDE(SUM('iphone_sales_dataset'[Total_Sales]), DISTINCTCOUNT('iphone_sales_dataset'[Order_ID]))
+Avg Rating = AVERAGE('iphone_sales_dataset'[Customer_Rating])
+Avg Delivery Days = AVERAGE('iphone_sales_dataset'[Delivery_Days])
+
+Return Rate (shipped) =
+DIVIDE(
+    CALCULATE(COUNTROWS('iphone_sales_dataset'), 'iphone_sales_dataset'[Order_Status] = "Returned"),
+    CALCULATE(COUNTROWS('iphone_sales_dataset'), 'iphone_sales_dataset'[Order_Status] IN {"Delivered", "Returned"})
+)
+
+Cancel Rate = DIVIDE(CALCULATE(COUNTROWS('iphone_sales_dataset'), 'iphone_sales_dataset'[Order_Status] = "Cancelled"), COUNTROWS('iphone_sales_dataset'))
+
+Unique Customers = DISTINCTCOUNT('iphone_sales_dataset'[Customer_ID])
+
+Repeat Customers =
+COUNTROWS(FILTER(VALUES('iphone_sales_dataset'[Customer_ID]), CALCULATE(DISTINCTCOUNT('iphone_sales_dataset'[Order_ID])) > 1))
+
+Repeat Customer % = DIVIDE([Repeat Customers], [Unique Customers])
+
+Top Selling Product =
+VAR T = TOPN(1, VALUES('iphone_sales_dataset'[iPhone_Model]), CALCULATE(SUM('iphone_sales_dataset'[Quantity])), DESC)
+RETURN MAXX(T, 'iphone_sales_dataset'[iPhone_Model])
+
+Top Selling Country =
+VAR T = TOPN(1, VALUES('iphone_sales_dataset'[Country]), CALCULATE(SUM('iphone_sales_dataset'[Quantity])), DESC)
+RETURN MAXX(T, 'iphone_sales_dataset'[Country])
+
+Top Selling Gender =
+VAR T = TOPN(1, VALUES('iphone_sales_dataset'[Gender]), CALCULATE(SUM('iphone_sales_dataset'[Quantity])), DESC)
+RETURN MAXX(T, 'iphone_sales_dataset'[Gender])
+
+Top Payment Method =
+VAR T = ADDCOLUMNS(VALUES('iphone_sales_dataset'[Payment_Method]), "@Orders", CALCULATE(COUNTROWS('iphone_sales_dataset')))
+VAR TopRow = TOPN(1, T, [@Orders], DESC)
+RETURN MAXX(TopRow, 'iphone_sales_dataset'[Payment_Method])
+
+// Calculated columns
+Month Start = DATE(YEAR('iphone_sales_dataset'[Sales_Date]), MONTH('iphone_sales_dataset'[Sales_Date]), 1)
+Month Label = FORMAT('iphone_sales_dataset'[Month Start], "mmm yyyy")   // Sort by column: Month Start
+
+Age Group =
+SWITCH(TRUE(),
+    'iphone_sales_dataset'[Age] < 25, "18-24",
+    'iphone_sales_dataset'[Age] < 35, "25-34",
+    'iphone_sales_dataset'[Age] < 45, "35-44",
+    'iphone_sales_dataset'[Age] < 55, "45-54",
+    "55+")
+
+// Month-over-month (needs a Date Table related to Sale_Date)
+MoM % =
+VAR LatestDate = MAX('Date Table'[Date])
+VAR CurStart   = DATE(YEAR(LatestDate), MONTH(LatestDate), 1)
+VAR PrevStart  = EDATE(CurStart, -1)
+VAR CurSales  = CALCULATE(SUM('iphone_sales_dataset'[Total_Sales]), FILTER(ALL('Date Table'), 'Date Table'[Date] >= CurStart && 'Date Table'[Date] <= EOMONTH(CurStart, 0)))
+VAR PrevSales = CALCULATE(SUM('iphone_sales_dataset'[Total_Sales]), FILTER(ALL('Date Table'), 'Date Table'[Date] >= PrevStart && 'Date Table'[Date] <= EOMONTH(PrevStart, 0)))
+RETURN DIVIDE(CurSales - PrevSales, PrevSales)
+
+MoM Label = VAR v = [MoM %] RETURN IF(ISBLANK(v), "-", IF(v >= 0, "▲ ", "▼ ") & FORMAT(ABS(v), "0.0%"))
+MoM Font Color = IF(ISBLANK([MoM %]), "#666666", IF([MoM %] >= 0, "#1E7B34", "#C0392B"))
+MoM Bg Color = IF(ISBLANK([MoM %]), "#EEEEEE", IF([MoM %] >= 0, "#E6F4EA", "#FDECEA"))
+
+// Date Table (create with Table tools > New table, then relate Date Table[Date] to iphone_sales_dataset[Sales_Date], many-to-one)
+Date Table =
+VAR MinD = DATE(YEAR(MIN('iphone_sales_dataset'[Sales_Date])), MONTH(MIN('iphone_sales_dataset'[Sales_Date])), 1)
+VAR MaxD = EOMONTH(MAX('iphone_sales_dataset'[Sales_Date]), 0)
+RETURN
+ADDCOLUMNS(
+    CALENDAR(MinD, MaxD),
+    "Month Year", FORMAT([Date], "MMM yyyy"),
+    "YearMonth", YEAR([Date]) * 100 + MONTH([Date])
+)
+// Then: Month Year > Sort by column > YearMonth. Use Date Table[Month Year] for the month chart and month slicers.
+
+Insight Country =
+VAR TopC = [Top Selling Country]
+VAR TopSales = CALCULATE(SUM('iphone_sales_dataset'[Total_Sales]), 'iphone_sales_dataset'[Country] = TopC)
+VAR Share = DIVIDE(TopSales, SUM('iphone_sales_dataset'[Total_Sales]))
+RETURN TopC & " is the top market with " & FORMAT(TopSales / 1000000, "$0.00") & "M (" & FORMAT(Share, "0%") & " of sales)"
